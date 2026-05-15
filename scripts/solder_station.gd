@@ -7,20 +7,17 @@ const COLOUR_MAP = {
 	"clear": Color("#C8E8F0")
 }
 
-const SOLDER_DURATION := 1.2  # seconds for the iron to travel one seam
+const SOLDER_DURATION := 1.2
 
-var _seams: Array = []         # {path, complete, seam_line, index}
+var _seams: Array = []
 var _seams_complete: int = 0
 var _animating: bool = false
-var _content_offset: Vector2 = Vector2.ZERO
 var _bead_glow_lines: Array = []
 var _bead_primary_lines: Array = []
 var _iron_cursor: Polygon2D
 
-@onready var piece_assembly  = $WorkArea/WorkpieceDisplay/PieceAssembly
-@onready var seam_container  = $WorkArea/WorkpieceDisplay/SeamContainer
-@onready var bead_layer      = $WorkArea/WorkpieceDisplay/BeadLayer
-@onready var seam_progress   = $Controls/SeamProgressBar
+@onready var assembly_node   = $AssemblyNode
+@onready var seam_progress   = $Controls/SeamProgressLabel
 @onready var complete_button = $Controls/CompleteButton
 
 func _ready():
@@ -33,12 +30,12 @@ func _ready():
 		var a = TAU * i / 16.0
 		pts.append(Vector2(cos(a), sin(a)) * 10.0)
 	_iron_cursor.polygon = pts
-	_iron_cursor.color = Color("#C8A870")  # warm iron colour
+	_iron_cursor.color = Color("#C8A870")
 	_iron_cursor.visible = false
-	bead_layer.add_child(_iron_cursor)
+	assembly_node.add_child(_iron_cursor)
 
 	await get_tree().process_frame
-	_content_offset = $WorkArea.global_position
+	assembly_node.position = get_viewport_rect().size / 2.0
 	_draw_pieces()
 	_build_seams()
 	_update_progress()
@@ -46,22 +43,25 @@ func _ready():
 func _draw_pieces():
 	for piece in GameState.current_cut_pieces:
 		var poly = Polygon2D.new()
-		var world_pts = PackedVector2Array()
+		var local_pts = PackedVector2Array()
 		for pt in piece.polygon_points:
-			world_pts.append(pt + Vector2(150, 100) + _content_offset)
-		poly.polygon = world_pts
+			# polygon_points are in piece-local coords (centred at origin).
+			# position_on_sheet is sheet-local (0–300, 0–200); subtract sheet centre
+			# so everything is centred around assembly_node's origin.
+			local_pts.append(pt + piece.position_on_sheet - Vector2(150, 100))
+		poly.polygon = local_pts
 		poly.color = COLOUR_MAP.get(piece.assigned_colour, Color.WHITE)
-		piece_assembly.add_child(poly)
+		assembly_node.add_child(poly)
 
-		# Dark border so the pieces look like individual panes sitting together.
 		var border = Line2D.new()
-		var bpts = piece.polygon_points.duplicate()
+		var bpts: Array = []
+		for pt in local_pts:
+			bpts.append(pt)
 		bpts.append(bpts[0])
-		for pt in bpts:
-			border.add_point(pt + Vector2(150, 100) + _content_offset)
+		border.points = PackedVector2Array(bpts)
 		border.width = 2.0
 		border.default_color = Color(0.08, 0.06, 0.04, 1.0)
-		piece_assembly.add_child(border)
+		assembly_node.add_child(border)
 
 func _build_seams():
 	if not GameState.has_meta("cut_lines"):
@@ -70,24 +70,23 @@ func _build_seams():
 
 	for i in range(cut_lines.size()):
 		var line_data = cut_lines[i]
-		var start = line_data[0] + Vector2(150, 100) + _content_offset
-		var end   = line_data[1] + Vector2(150, 100) + _content_offset
+		# cut_lines are already in centred coords (0,0 = sheet centre), use directly.
+		var start = line_data[0]
+		var end   = line_data[1]
 
-		# Seam line: dark gap showing where pieces meet, waiting for solder.
 		var seam_line = Line2D.new()
 		seam_line.add_point(start)
 		seam_line.add_point(end)
 		seam_line.width = 3.0
 		seam_line.default_color = Color(0.08, 0.06, 0.04, 0.85)
-		seam_container.add_child(seam_line)
+		assembly_node.add_child(seam_line)
 
-		# Pre-create bead lines (empty until iron runs).
 		var glow = Line2D.new()
 		glow.width = 9.0
 		glow.default_color = Color(1, 0.95, 0.7, 0.2)
 		glow.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		glow.end_cap_mode   = Line2D.LINE_CAP_ROUND
-		bead_layer.add_child(glow)
+		assembly_node.add_child(glow)
 		_bead_glow_lines.append(glow)
 
 		var primary = Line2D.new()
@@ -95,7 +94,7 @@ func _build_seams():
 		primary.default_color = Color("#C8C0B0")
 		primary.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		primary.end_cap_mode   = Line2D.LINE_CAP_ROUND
-		bead_layer.add_child(primary)
+		assembly_node.add_child(primary)
 		_bead_primary_lines.append(primary)
 
 		_seams.append({
@@ -105,15 +104,15 @@ func _build_seams():
 			"index": i
 		})
 
-# Click detection via distance — same approach as cutting table.
 func _input(event):
 	if _animating:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var local_click = assembly_node.to_local(event.position)
 		for seam in _seams:
 			if seam["complete"]:
 				continue
-			if _near_segment(event.position, seam["start"], seam["end"], 16.0):
+			if _near_segment(local_click, seam["start"], seam["end"], 16.0):
 				_run_solder(seam)
 				get_viewport().set_input_as_handled()
 				return
@@ -126,7 +125,6 @@ func _near_segment(pt: Vector2, a: Vector2, b: Vector2, threshold: float) -> boo
 	var t = clamp((pt - a).dot(ab) / len_sq, 0.0, 1.0)
 	return pt.distance_to(a + t * ab) < threshold
 
-# Click a seam → the iron travels it automatically, bead forms behind it.
 func _run_solder(seam: Dictionary):
 	_animating = true
 	_iron_cursor.visible = true
@@ -151,7 +149,7 @@ func _advance_bead(pt: Vector2, glow: Line2D, primary: Line2D):
 
 func _finish_solder(seam: Dictionary):
 	seam["complete"] = true
-	seam["seam_line"].hide()  # bead now covers the gap
+	seam["seam_line"].hide()
 	_seams_complete += 1
 	_animating = false
 	_iron_cursor.visible = false
