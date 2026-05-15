@@ -1,47 +1,42 @@
 extends Control
 
 const COLOUR_MAP = {
-	"red": Color("#D4534A"),
+	"red":   Color("#D4534A"),
 	"amber": Color("#E8A838"),
 	"green": Color("#4A9E6B"),
 	"clear": Color("#C8E8F0")
 }
 
-var _seams: Array = []
-var _seam_paths: Array = []
-var _active_seam_index: int = -1
-var _is_dragging: bool = false
+const SOLDER_DURATION := 1.2  # seconds for the iron to travel one seam
+
+var _seams: Array = []         # {path, complete, seam_line, index}
 var _seams_complete: int = 0
+var _animating: bool = false
+var _content_offset: Vector2 = Vector2.ZERO
 var _bead_glow_lines: Array = []
 var _bead_primary_lines: Array = []
-var _content_offset: Vector2 = Vector2.ZERO
-
-@onready var piece_assembly = $WorkArea/WorkpieceDisplay/PieceAssembly
-@onready var seam_container = $WorkArea/WorkpieceDisplay/SeamContainer
-@onready var bead_layer = $WorkArea/WorkpieceDisplay/BeadLayer
-@onready var seam_progress = $Controls/SeamProgressBar
-@onready var complete_button = $Controls/CompleteButton
-
 var _iron_cursor: Polygon2D
+
+@onready var piece_assembly  = $WorkArea/WorkpieceDisplay/PieceAssembly
+@onready var seam_container  = $WorkArea/WorkpieceDisplay/SeamContainer
+@onready var bead_layer      = $WorkArea/WorkpieceDisplay/BeadLayer
+@onready var seam_progress   = $Controls/SeamProgressBar
+@onready var complete_button = $Controls/CompleteButton
 
 func _ready():
 	complete_button.disabled = true
 	complete_button.pressed.connect(_on_complete)
 
-	# Build iron cursor as a Polygon2D (Node2D) so it renders correctly in the 2D canvas.
 	_iron_cursor = Polygon2D.new()
 	var pts: PackedVector2Array = []
-	var sides = 12
-	for i in range(sides):
-		var a = TAU * i / sides
-		pts.append(Vector2(cos(a), sin(a)) * 12.0)
+	for i in range(16):
+		var a = TAU * i / 16.0
+		pts.append(Vector2(cos(a), sin(a)) * 10.0)
 	_iron_cursor.polygon = pts
-	_iron_cursor.color = Color("#8A7A6A")
+	_iron_cursor.color = Color("#C8A870")  # warm iron colour
 	_iron_cursor.visible = false
-	seam_container.add_child(_iron_cursor)
+	bead_layer.add_child(_iron_cursor)
 
-	# Wait one frame so Control layout is computed before reading global_position.
-	# Node2D children of Control nodes have (0,0) at viewport origin, not parent position.
 	await get_tree().process_frame
 	_content_offset = $WorkArea.global_position
 	_draw_pieces()
@@ -55,10 +50,18 @@ func _draw_pieces():
 		for pt in piece.polygon_points:
 			world_pts.append(pt + Vector2(150, 100) + _content_offset)
 		poly.polygon = world_pts
-		var col = COLOUR_MAP.get(piece.assigned_colour, Color.WHITE)
-		col.a = 0.85
-		poly.color = col
+		poly.color = COLOUR_MAP.get(piece.assigned_colour, Color.WHITE)
 		piece_assembly.add_child(poly)
+
+		# Dark border so the pieces look like individual panes sitting together.
+		var border = Line2D.new()
+		var bpts = piece.polygon_points.duplicate()
+		bpts.append(bpts[0])
+		for pt in bpts:
+			border.add_point(pt + Vector2(150, 100) + _content_offset)
+		border.width = 2.0
+		border.default_color = Color(0.08, 0.06, 0.04, 1.0)
+		piece_assembly.add_child(border)
 
 func _build_seams():
 	if not GameState.has_meta("cut_lines"):
@@ -68,123 +71,91 @@ func _build_seams():
 	for i in range(cut_lines.size()):
 		var line_data = cut_lines[i]
 		var start = line_data[0] + Vector2(150, 100) + _content_offset
-		var end = line_data[1] + Vector2(150, 100) + _content_offset
+		var end   = line_data[1] + Vector2(150, 100) + _content_offset
 
-		var path_pts = _generate_path_points(start, end)
-		_seam_paths.append(path_pts)
-
+		# Seam line: dark gap showing where pieces meet, waiting for solder.
 		var seam_line = Line2D.new()
 		seam_line.add_point(start)
 		seam_line.add_point(end)
 		seam_line.width = 3.0
-		seam_line.default_color = Color(0.7, 0.7, 0.7, 0.6)
+		seam_line.default_color = Color(0.08, 0.06, 0.04, 0.85)
 		seam_container.add_child(seam_line)
-		_seams.append({"line": seam_line, "complete": false, "index": i})
 
-		var area = Area2D.new()
-		area.collision_layer = 1
-		area.collision_mask = 1
-		var shape = CollisionShape2D.new()
-		var rect = RectangleShape2D.new()
-		var vec = end - start
-		rect.size = Vector2(vec.length(), 16)
-		shape.shape = rect
-		shape.position = (start + end) / 2.0
-		shape.rotation = vec.angle()
-		area.add_child(shape)
-		area.set_meta("seam_index", i)
-		area.input_event.connect(_on_seam_click.bind(i))
-		area.input_pickable = true
-		seam_container.add_child(area)
-
-		# Pre-create bead lines
+		# Pre-create bead lines (empty until iron runs).
 		var glow = Line2D.new()
-		glow.width = 8.0
-		glow.default_color = Color(1, 1, 1, 0.25)
+		glow.width = 9.0
+		glow.default_color = Color(1, 0.95, 0.7, 0.2)
 		glow.begin_cap_mode = Line2D.LINE_CAP_ROUND
-		glow.end_cap_mode = Line2D.LINE_CAP_ROUND
+		glow.end_cap_mode   = Line2D.LINE_CAP_ROUND
 		bead_layer.add_child(glow)
 		_bead_glow_lines.append(glow)
 
 		var primary = Line2D.new()
 		primary.width = 4.0
-		primary.default_color = Color("#D4D4D4")
+		primary.default_color = Color("#C8C0B0")
 		primary.begin_cap_mode = Line2D.LINE_CAP_ROUND
-		primary.end_cap_mode = Line2D.LINE_CAP_ROUND
+		primary.end_cap_mode   = Line2D.LINE_CAP_ROUND
 		bead_layer.add_child(primary)
 		_bead_primary_lines.append(primary)
 
-func _generate_path_points(start: Vector2, end: Vector2) -> PackedVector2Array:
-	var pts = PackedVector2Array()
+		_seams.append({
+			"start": start, "end": end,
+			"seam_line": seam_line,
+			"complete": false,
+			"index": i
+		})
+
+# Click detection via distance — same approach as cutting table.
+func _input(event):
+	if _animating:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		for seam in _seams:
+			if seam["complete"]:
+				continue
+			if _near_segment(event.position, seam["start"], seam["end"], 16.0):
+				_run_solder(seam)
+				get_viewport().set_input_as_handled()
+				return
+
+func _near_segment(pt: Vector2, a: Vector2, b: Vector2, threshold: float) -> bool:
+	var ab = b - a
+	var len_sq = ab.length_squared()
+	if len_sq < 0.001:
+		return pt.distance_to(a) < threshold
+	var t = clamp((pt - a).dot(ab) / len_sq, 0.0, 1.0)
+	return pt.distance_to(a + t * ab) < threshold
+
+# Click a seam → the iron travels it automatically, bead forms behind it.
+func _run_solder(seam: Dictionary):
+	_animating = true
+	_iron_cursor.visible = true
+	_iron_cursor.position = seam["start"]
+
 	var steps = 30
+	var glow    = _bead_glow_lines[seam["index"]]
+	var primary = _bead_primary_lines[seam["index"]]
+
+	var tween = create_tween()
 	for i in range(steps + 1):
 		var t = float(i) / float(steps)
-		pts.append(start.lerp(end, t))
-	return pts
+		var pt = seam["start"].lerp(seam["end"], t)
+		tween.tween_callback(_advance_bead.bind(pt, glow, primary))
+		tween.tween_interval(SOLDER_DURATION / steps)
+	tween.tween_callback(_finish_solder.bind(seam))
 
-func _on_seam_click(_viewport, event, _shape, seam_index: int):
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed and not _seams[seam_index]["complete"]:
-			_active_seam_index = seam_index
-			_is_dragging = true
-			_iron_cursor.visible = true
-		elif not event.pressed:
-			_is_dragging = false
-			_iron_cursor.visible = false
+func _advance_bead(pt: Vector2, glow: Line2D, primary: Line2D):
+	_iron_cursor.position = pt
+	glow.add_point(pt)
+	primary.add_point(pt)
 
-func _process(_delta):
-	if not _is_dragging or _active_seam_index < 0:
-		return
-	if _active_seam_index >= _seams.size():
-		return
-	if _seams[_active_seam_index]["complete"]:
-		return
-
-	var mouse = get_viewport().get_mouse_position()
-	var local_mouse = seam_container.to_local(mouse)
-	var path = _seam_paths[_active_seam_index]
-	var closest = _closest_on_path(local_mouse, path)
-
-	_iron_cursor.position = closest
-
-	var glow = _bead_glow_lines[_active_seam_index]
-	var primary = _bead_primary_lines[_active_seam_index]
-
-	# Append if far enough from last point
-	var should_add = true
-	if glow.get_point_count() > 0:
-		var last = glow.get_point_position(glow.get_point_count() - 1)
-		if last.distance_to(closest) < 3.0:
-			should_add = false
-
-	if should_add:
-		glow.add_point(closest)
-		primary.add_point(closest)
-
-	# Check if we reached the end
-	var end_pt = path[path.size() - 1]
-	if closest.distance_to(end_pt) < 15.0:
-		_complete_seam(_active_seam_index)
-
-func _closest_on_path(pos: Vector2, path: PackedVector2Array) -> Vector2:
-	var best = path[0]
-	var best_dist = pos.distance_to(best)
-	for pt in path:
-		var d = pos.distance_to(pt)
-		if d < best_dist:
-			best_dist = d
-			best = pt
-	return best
-
-func _complete_seam(index: int):
-	_seams[index]["complete"] = true
-	_seams[index]["line"].default_color = Color(0.85, 0.85, 0.85, 1.0)
+func _finish_solder(seam: Dictionary):
+	seam["complete"] = true
+	seam["seam_line"].hide()  # bead now covers the gap
 	_seams_complete += 1
-	_is_dragging = false
+	_animating = false
 	_iron_cursor.visible = false
-	_active_seam_index = -1
 	_update_progress()
-
 	if _seams_complete >= _seams.size():
 		complete_button.disabled = false
 
@@ -219,14 +190,13 @@ func _show_delivery_modal():
 	vbox.add_child(title)
 
 	var client_label = Label.new()
-	var commission = GameState.active_commission
-	client_label.text = "For: %s" % commission.client_name
+	client_label.text = "For: %s" % GameState.active_commission.client_name
 	client_label.add_theme_color_override("font_color", Color("#C0B8A8"))
 	client_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(client_label)
 
 	var payout_label = Label.new()
-	payout_label.text = "Payout: +%dg" % commission.payout
+	payout_label.text = "Payout: +%dg" % GameState.active_commission.payout
 	payout_label.add_theme_font_size_override("font_size", 20)
 	payout_label.add_theme_color_override("font_color", Color("#E8A838"))
 	payout_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -243,14 +213,12 @@ func _show_delivery_modal():
 	vbox.add_child(deliver_btn)
 
 	add_child(modal)
-	# Centre it after one frame so size is known
 	await get_tree().process_frame
 	modal.position = (get_viewport_rect().size - modal.size) / 2.0
 
 func _on_deliver(modal: Control):
-	var commission = GameState.active_commission
-	GameState.wallet += commission.payout
-	commission.is_complete = true
+	GameState.wallet += GameState.active_commission.payout
+	GameState.active_commission.is_complete = true
 	GameState.active_commission = null
 	GameState.current_cut_pieces = []
 	modal.queue_free()
