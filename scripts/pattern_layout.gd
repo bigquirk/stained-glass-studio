@@ -192,6 +192,7 @@ func _spawn_pieces(pattern_data: Dictionary):
 		node.set_meta("poly",          piece_data["poly"])
 		node.set_meta("colour_name",   colour_name)
 		node.set_meta("snapped",       false)
+		node.set_meta("target_local",  piece_data["target"])   # sheet-local (0–300, 0–200)
 		node.set_meta("target_screen", _sheet_origin + piece_data["target"])
 
 		var poly = Polygon2D.new()
@@ -318,7 +319,7 @@ func _on_confirm():
 		pp.piece_id       = piece.get_meta("piece_id")
 		pp.polygon_points = PackedVector2Array(piece.get_meta("poly"))
 		pp.assigned_colour = piece.get_meta("colour_name")
-		pp.position_on_sheet = piece.position
+		pp.position_on_sheet = piece.get_meta("target_local", Vector2.ZERO)
 		pp.rotation_degrees  = piece.rotation_degrees
 		GameState.current_cut_pieces.append(pp)
 	GameState.set_meta("cut_lines", pattern_data["cut_lines"])
