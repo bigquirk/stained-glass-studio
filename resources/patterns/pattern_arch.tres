@@ -1,0 +1,8 @@
+[gd_resource type="Resource" format=3]
+
+; Pattern: Arch
+; This pattern data is referenced by ID "pattern_arch" in GameState and PatternLayout.
+; The actual geometry is defined inline in scripts/pattern_layout.gd (PATTERNS dictionary).
+
+[resource]
+script = null

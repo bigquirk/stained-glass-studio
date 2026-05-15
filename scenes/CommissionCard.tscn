@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://b0card00001"]
+
+; CommissionCard is built procedurally in commission_board.gd via _make_card().
+; This scene exists as a placeholder for future standalone card scenes.
+
+[node name="CommissionCard" type="PanelContainer"]
+custom_minimum_size = Vector2(500, 100)
+
+[node name="HBox" type="HBoxContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InfoVBox" type="VBoxContainer" parent="HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ClientName" type="Label" parent="HBox/InfoVBox"]
+layout_mode = 2
+text = "Client Name"
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.941176, 0.909804, 0.847059, 1)
+
+[node name="PatternLabel" type="Label" parent="HBox/InfoVBox"]
+layout_mode = 2
+text = "Pattern: Diamond"
+theme_override_colors/font_color = Color(0.752941, 0.721569, 0.658824, 1)
+
+[node name="DeadlineLabel" type="Label" parent="HBox/InfoVBox"]
+layout_mode = 2
+text = "Deadline: 5 days  |  Payout: 25g"
+theme_override_colors/font_color = Color(0.752941, 0.721569, 0.658824, 1)
+
+[node name="SwatchRow" type="HBoxContainer" parent="HBox/InfoVBox"]
+layout_mode = 2
+
+[node name="AcceptButton" type="Button" parent="HBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(80, 60)
+text = "Accept"

@@ -1,0 +1,9 @@
+[gd_resource type="Resource" format=3]
+
+; Pattern: Diamond
+; This pattern data is referenced by ID "pattern_diamond" in GameState and PatternLayout.
+; The actual geometry is defined inline in scripts/pattern_layout.gd (PATTERNS dictionary).
+; This .tres file serves as a registry entry and can be extended with metadata.
+
+[resource]
+script = null

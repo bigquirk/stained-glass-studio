@@ -1,0 +1,55 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0shop00001"]
+
+[ext_resource type="Script" path="res://scripts/shop.gd" id="1_shop"]
+
+[node name="Shop" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_shop")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.164706, 0.125490, 0.094118, 1)
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -250.0
+offset_top = -200.0
+offset_right = 250.0
+offset_bottom = 200.0
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Glass Shop"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(0.941176, 0.909804, 0.847059, 1)
+
+[node name="WalletDisplay" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Wallet: 50g"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.909804, 0.643137, 0.219608, 1)
+
+[node name="SheetGrid" type="GridContainer" parent="VBox"]
+layout_mode = 2
+columns = 4
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 12
+
+[node name="BackButton" type="Button" parent="VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Back to Board"

@@ -1,0 +1,63 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0cutt00001"]
+
+[ext_resource type="Script" path="res://scripts/cutting_table.gd" id="1_ct"]
+
+[node name="CuttingTable" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_ct")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.164706, 0.125490, 0.094118, 1)
+
+[node name="SheetArea" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -250.0
+offset_right = 300.0
+offset_bottom = 250.0
+
+[node name="SheetDisplay" type="ColorRect" parent="SheetArea"]
+layout_mode = 0
+offset_right = 300.0
+offset_bottom = 200.0
+color = Color(0.784314, 0.909804, 0.941176, 0.85)
+
+[node name="CutLinesContainer" type="Node2D" parent="SheetArea"]
+
+[node name="CrackAnimationLayer" type="Node2D" parent="SheetArea"]
+
+[node name="RevealedPiecesLayer" type="Node2D" parent="SheetArea"]
+
+[node name="Controls" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchor_left = 0.5
+anchor_top = 0.88
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_right = 200.0
+theme_override_constants/separation = 8
+
+[node name="InstructionLabel" type="Label" parent="Controls"]
+layout_mode = 2
+text = "Click a white line to crack it"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.941176, 0.909804, 0.847059, 1)
+
+[node name="DoneButton" type="Button" parent="Controls"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 44)
+text = "Done — Proceed to Solder"
+disabled = true

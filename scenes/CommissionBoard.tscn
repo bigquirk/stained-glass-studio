@@ -1,0 +1,54 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0comm00001"]
+
+[ext_resource type="Script" path="res://scripts/commission_board.gd" id="1_cb"]
+
+[node name="CommissionBoard" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_cb")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.164706, 0.125490, 0.094118, 1)
+
+[node name="MainVBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -280.0
+offset_top = -300.0
+offset_right = 280.0
+offset_bottom = 300.0
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="MainVBox"]
+layout_mode = 2
+text = "Stained Glass Studio"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 32
+theme_override_colors/font_color = Color(0.941176, 0.909804, 0.847059, 1)
+
+[node name="WalletDisplay" type="Label" parent="MainVBox"]
+layout_mode = 2
+text = "Wallet: 50g"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.909804, 0.643137, 0.219608, 1)
+
+[node name="CommissionList" type="VBoxContainer" parent="MainVBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 320)
+theme_override_constants/separation = 8
+
+[node name="ShopButton" type="Button" parent="MainVBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Visit Shop"
