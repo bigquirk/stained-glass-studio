@@ -1,8 +1,9 @@
 extends Control
 
-# Each colour in the commission gets its own glass sheet.
-# Pieces are packed as tightly as possible to minimise waste.
-# Click a piece to score around its perimeter and snap it free.
+# Guillotine-cut mechanic: score column cuts first, then within-column cuts.
+# All pieces from the pattern are shown as paper templates on one glass sheet.
+# Cut lines are presented phase by phase — complete all cuts in a phase to
+# unlock the next. Click a highlighted guide line to score it.
 
 const COLOUR_MAP = {
 	"red":   Color("#D4534A"),
@@ -11,17 +12,16 @@ const COLOUR_MAP = {
 	"clear": Color("#C8E8F0")
 }
 
-const SHEET_W    := 300.0
-const SHEET_H    := 200.0
-const SHEET_GAP  := 60.0
-const PACK_PAD   := 10.0   # gap between packed pieces and sheet edges
+# Display scale — pattern coords are 300×200 centred; scale for visibility.
+const DISPLAY_SCALE := 2.0
 
-var _piece_infos: Array = []   # {piece, poly_node, border, sheet_origin, cracked}
-var _cut_count: int = 0
-var _total_pieces: int = 0
-var _cracking: bool = false
-var _total_sheet_area: float = 0.0
-var _used_area: float = 0.0
+var _cut_sequence: Array = []   # Array of phases; each phase = Array of [start, end]
+var _current_phase: int = 0
+var _phase_done: Array = []     # bool per cut in current phase
+var _active_nodes: Array = []   # Line2D per active cut (highlighted)
+var _animating: bool = false
+var _total_cuts: int = 0
+var _cuts_made: int = 0
 
 @onready var sheets_container  = $SheetsContainer
 @onready var done_button       = $Controls/DoneButton
@@ -33,222 +33,170 @@ func _ready():
 	done_button.pressed.connect(_on_done)
 
 	await get_tree().process_frame
-	_build_sheets()
+	sheets_container.position = get_viewport_rect().size / 2.0
+	sheets_container.scale    = Vector2(DISPLAY_SCALE, DISPLAY_SCALE)
 
-func _build_sheets():
-	var by_colour: Dictionary = {}
-	for piece in GameState.current_cut_pieces:
-		var c = piece.assigned_colour
-		if not by_colour.has(c):
-			by_colour[c] = []
-		by_colour[c].append(piece)
-
-	var colours = by_colour.keys()
-	var count   = colours.size()
-	_total_pieces = GameState.current_cut_pieces.size()
-
-	var total_w = count * SHEET_W + (count - 1) * SHEET_GAP
-	var start_x = (get_viewport_rect().size.x - total_w) / 2.0
-	var sheet_y = (get_viewport_rect().size.y - SHEET_H) / 2.0 - 40.0
-
-	for i in range(count):
-		var colour = colours[i]
-		var pieces = by_colour[colour]
-		var origin = Vector2(start_x + i * (SHEET_W + SHEET_GAP), sheet_y)
-		_total_sheet_area += SHEET_W * SHEET_H
-		_create_sheet(colour, pieces, origin)
-
+	_draw_board()
+	_draw_pieces()
+	_load_cut_sequence()
+	_show_current_phase()
 	_update_progress()
 
-# --- Piece bounding box (polygon_points are centred at origin) ---
-func _piece_bounds(piece: PatternPiece) -> Rect2:
-	var min_x = INF;  var max_x = -INF
-	var min_y = INF;  var max_y = -INF
-	for pt in piece.polygon_points:
-		min_x = min(min_x, pt.x);  max_x = max(max_x, pt.x)
-		min_y = min(min_y, pt.y);  max_y = max(max_y, pt.y)
-	return Rect2(min_x, min_y, max_x - min_x, max_y - min_y)
+# --- Drawing ---
 
-# Greedy shelf-packing: fill left-to-right, wrap to next row when full.
-# Returns sheet-local centres for each piece (0–SHEET_W, 0–SHEET_H).
-func _pack_pieces(pieces: Array) -> Array:
-	# Sort tallest-first so rows pack more evenly.
-	var sorted = pieces.duplicate()
-	sorted.sort_custom(func(a, b):
-		return _piece_bounds(a).size.y > _piece_bounds(b).size.y
-	)
-
-	var centres: Dictionary = {}  # piece → Vector2
-	var cursor_x = PACK_PAD
-	var cursor_y = PACK_PAD
-	var row_h    = 0.0
-
-	for piece in sorted:
-		var b  = _piece_bounds(piece)
-		var pw = b.size.x
-		var ph = b.size.y
-
-		# Overflow to next row.
-		if cursor_x + pw + PACK_PAD > SHEET_W and cursor_x > PACK_PAD:
-			cursor_x = PACK_PAD
-			cursor_y += row_h + PACK_PAD
-			row_h = 0.0
-
-		centres[piece] = Vector2(cursor_x + pw * 0.5, cursor_y + ph * 0.5)
-		_used_area += pw * ph
-		cursor_x  += pw + PACK_PAD
-		row_h = max(row_h, ph)
-
-	# Return in original order so indices match _piece_infos.
-	var result: Array = []
-	for piece in pieces:
-		result.append(centres[piece])
-	return result
-
-func _create_sheet(colour: String, pieces: Array, origin: Vector2):
-	var glass_col = COLOUR_MAP.get(colour, Color.WHITE)
-	var packed    = _pack_pieces(pieces)
-
-	# Sheet background.
-	var sheet_bg = Polygon2D.new()
-	sheet_bg.polygon = PackedVector2Array([
-		Vector2(0, 0), Vector2(SHEET_W, 0),
-		Vector2(SHEET_W, SHEET_H), Vector2(0, SHEET_H)
+func _draw_board():
+	# Glass sheet background: frosted, full sheet extent (–150..150, –100..100).
+	var sheet = Polygon2D.new()
+	sheet.polygon = PackedVector2Array([
+		Vector2(-150,-100), Vector2(150,-100),
+		Vector2(150,100),   Vector2(-150,100)
 	])
-	sheet_bg.position = origin
-	var bg_col = glass_col
-	bg_col.a = 0.55
-	sheet_bg.color = bg_col
-	sheets_container.add_child(sheet_bg)
+	sheet.color = Color(0.82, 0.88, 0.90, 0.65)
+	sheets_container.add_child(sheet)
 
-	# Sheet border.
 	var border = Line2D.new()
-	for pt in [Vector2(0,0), Vector2(SHEET_W,0), Vector2(SHEET_W,SHEET_H), Vector2(0,SHEET_H), Vector2(0,0)]:
-		border.add_point(origin + pt)
-	border.width = 2.0
-	border.default_color = Color(1, 1, 1, 0.4)
+	for pt in [Vector2(-150,-100), Vector2(150,-100), Vector2(150,100), Vector2(-150,100), Vector2(-150,-100)]:
+		border.add_point(pt)
+	border.width = 1.5
+	border.default_color = Color(1, 1, 1, 0.55)
 	sheets_container.add_child(border)
 
-	# Colour label above the sheet.
-	var label = Label.new()
-	label.text = colour.capitalize() + " sheet"
-	label.add_theme_color_override("font_color", Color("#C0B8A8"))
-	label.position = origin + Vector2(0, -28)
-	label.size = Vector2(SHEET_W, 24)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sheets_container.add_child(label)
+func _draw_pieces():
+	for piece in GameState.current_cut_pieces:
+		# position_on_sheet is sheet-local (0–300, 0–200); shift to centred coords.
+		var centre = piece.position_on_sheet - Vector2(150, 100)
 
-	# Pieces packed onto the sheet.
-	for i in range(pieces.size()):
-		var piece: PatternPiece = pieces[i]
-		var piece_centre = origin + packed[i]
+		# Cream paper base.
+		var paper = Polygon2D.new()
+		paper.polygon = piece.polygon_points
+		paper.position = centre
+		paper.color = Color(0.96, 0.93, 0.88, 1.0)
+		sheets_container.add_child(paper)
 
-		var poly_node = Polygon2D.new()
-		poly_node.polygon = piece.polygon_points
-		poly_node.position = piece_centre
-		poly_node.color = glass_col
-		sheets_container.add_child(poly_node)
+		# Colour tint — paint-by-numbers fill.
+		var tint = Polygon2D.new()
+		tint.polygon = piece.polygon_points
+		tint.position = centre
+		var col = COLOUR_MAP.get(piece.assigned_colour, Color.WHITE)
+		col.a = 0.50
+		tint.color = col
+		sheets_container.add_child(tint)
 
-		var piece_border = Line2D.new()
-		var bpts: Array = []
+		# Thick sharpie border.
+		var bdr = Line2D.new()
+		var pts: Array = []
 		for pt in piece.polygon_points:
-			bpts.append(piece_centre + pt)
-		bpts.append(bpts[0])
-		piece_border.points = PackedVector2Array(bpts)
-		piece_border.width = 2.0
-		piece_border.default_color = Color(0.1, 0.08, 0.06, 0.9)
-		sheets_container.add_child(piece_border)
+			pts.append(pt)
+		pts.append(pts[0])
+		bdr.points = PackedVector2Array(pts)
+		bdr.position = centre
+		bdr.width = 2.0
+		bdr.default_color = Color(0.08, 0.05, 0.03, 0.95)
+		sheets_container.add_child(bdr)
 
-		_piece_infos.append({
-			"piece":        piece,
-			"poly_node":    poly_node,
-			"border":       piece_border,
-			"sheet_origin": origin,
-			"packed_pos":   packed[i],   # sheet-local centre
-			"cracked":      false
-		})
+# --- Cut sequence ---
+
+func _load_cut_sequence():
+	if not GameState.has_meta("cut_sequence"):
+		return
+	_cut_sequence = GameState.get_meta("cut_sequence")
+	for phase in _cut_sequence:
+		_total_cuts += phase.size()
+
+func _show_current_phase():
+	for node in _active_nodes:
+		node.queue_free()
+	_active_nodes.clear()
+	_phase_done.clear()
+
+	if _current_phase >= _cut_sequence.size():
+		done_button.disabled = false
+		instruction_label.text = "All cuts made — proceed to solder."
+		return
+
+	var phase = _cut_sequence[_current_phase]
+	for cut in phase:
+		var line = Line2D.new()
+		line.add_point(cut[0])
+		line.add_point(cut[1])
+		line.width = 2.0
+		line.default_color = Color(1.0, 0.88, 0.25, 0.92)  # amber guide line
+		line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+		line.end_cap_mode   = Line2D.LINE_CAP_ROUND
+		sheets_container.add_child(line)
+		_active_nodes.append(line)
+		_phase_done.append(false)
+
+	if _current_phase == 0:
+		instruction_label.text = "Score the column cuts first — click a guide line."
+	else:
+		instruction_label.text = "Now score within each section — click a guide line."
+
+# --- Input ---
 
 func _input(event):
-	if _cracking:
+	if _animating or _current_phase >= _cut_sequence.size():
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		for info in _piece_infos:
-			if info["cracked"]:
+		# Convert to sheets_container local space (accounts for position + scale).
+		var local_click = sheets_container.to_local(event.position)
+		var phase = _cut_sequence[_current_phase]
+		for i in range(phase.size()):
+			if _phase_done[i]:
 				continue
-			if _click_hits_piece(event.position, info):
-				_score_piece(info)
+			var cut = phase[i]
+			if _near_segment(local_click, cut[0], cut[1], 12.0):
+				_run_cut(i, cut)
 				get_viewport().set_input_as_handled()
 				return
 
-func _click_hits_piece(click: Vector2, info: Dictionary) -> bool:
-	var piece: PatternPiece = info["piece"]
-	var piece_centre: Vector2 = info["sheet_origin"] + info["packed_pos"]
-	var world_poly = PackedVector2Array()
-	for pt in piece.polygon_points:
-		world_poly.append(piece_centre + pt)
-	return Geometry2D.is_point_in_polygon(click, world_poly)
+func _near_segment(pt: Vector2, a: Vector2, b: Vector2, threshold: float) -> bool:
+	var ab = b - a
+	var len_sq = ab.length_squared()
+	if len_sq < 0.001:
+		return pt.distance_to(a) < threshold
+	var t = clamp((pt - a).dot(ab) / len_sq, 0.0, 1.0)
+	return pt.distance_to(a + t * ab) < threshold
 
-func _score_piece(info: Dictionary):
-	_cracking = true
-	var piece: PatternPiece = info["piece"]
-	var piece_centre: Vector2 = info["sheet_origin"] + info["packed_pos"]
+# --- Cut animation ---
 
-	var world_pts: Array = []
-	for pt in piece.polygon_points:
-		world_pts.append(piece_centre + pt)
-	world_pts.append(world_pts[0])
+func _run_cut(idx: int, cut: Array):
+	_animating = true
+	_active_nodes[idx].hide()
 
 	var crack = Line2D.new()
-	crack.width = 2.5
-	crack.default_color = Color(1, 1, 1, 0.95)
+	crack.width = 1.5
+	crack.default_color = Color(1, 1, 1, 0.9)
 	crack.begin_cap_mode = Line2D.LINE_CAP_ROUND
 	crack.end_cap_mode   = Line2D.LINE_CAP_ROUND
 	sheets_container.add_child(crack)
 
 	var tween = create_tween()
-	var n = world_pts.size()
-	var duration = 0.5
-	for i in range(n):
-		tween.tween_callback(crack.add_point.bind(world_pts[i]))
-		tween.tween_interval(duration / n)
-	tween.tween_callback(_finish_cut.bind(info, crack))
+	var steps = 20
+	var duration = 0.35
+	for i in range(steps + 1):
+		var t = float(i) / steps
+		var pt = cut[0].lerp(cut[1], t)
+		tween.tween_callback(crack.add_point.bind(pt))
+		tween.tween_interval(duration / steps)
+	tween.tween_callback(_finish_cut.bind(idx, crack))
 
-func _finish_cut(info: Dictionary, crack: Line2D):
-	info["cracked"] = true
-	_cut_count += 1
-	_cracking = false
+func _finish_cut(idx: int, crack: Line2D):
+	_phase_done[idx] = true
+	_cuts_made += 1
+	_animating = false
 
-	crack.default_color = Color(0.15, 0.12, 0.10, 0.85)
-	crack.width = 1.5
-
-	var poly: Polygon2D = info["poly_node"]
-	var col = poly.color.lightened(0.12)
-	col.a = 1.0
-	poly.color = col
+	# Score mark: permanent dark line.
+	crack.default_color = Color(0.12, 0.10, 0.08, 0.88)
+	crack.width = 1.0
 
 	_do_screen_shake()
-	_spawn_chips(info)
 	_update_progress()
 
-	if _cut_count >= _total_pieces:
-		done_button.disabled = false
-		instruction_label.text = "All pieces cut — proceed to solder."
-
-func _spawn_chips(info: Dictionary):
-	var piece: PatternPiece = info["piece"]
-	var piece_centre = info["sheet_origin"] + info["packed_pos"]
-	for i in range(6):
-		var pt_idx = i % piece.polygon_points.size()
-		var spawn = piece_centre + piece.polygon_points[pt_idx]
-		var chip = Polygon2D.new()
-		chip.polygon = PackedVector2Array([Vector2(-2,-2),Vector2(2,-2),Vector2(2,2),Vector2(-2,2)])
-		chip.color = Color(0.9, 0.95, 1.0, 0.85)
-		chip.position = spawn + Vector2(randf_range(-4,4), randf_range(-4,4))
-		sheets_container.add_child(chip)
-		var tw = create_tween()
-		tw.tween_property(chip, "position", chip.position + Vector2(randf_range(-18,18), randf_range(-18,18)), 0.35)
-		tw.parallel().tween_property(chip, "modulate:a", 0.0, 0.35)
-		tw.tween_callback(chip.queue_free)
+	# Advance phase once every cut in this phase is done.
+	if not _phase_done.has(false):
+		_current_phase += 1
+		_show_current_phase()
 
 func _do_screen_shake():
 	var tween = create_tween()
@@ -259,10 +207,7 @@ func _do_screen_shake():
 	tween.tween_property(vp, "canvas_transform", Transform2D.IDENTITY, 0.025)
 
 func _update_progress():
-	var waste_pct = 0
-	if _total_sheet_area > 0:
-		waste_pct = int((1.0 - _used_area / _total_sheet_area) * 100.0)
-	progress_label.text = "Cut: %d / %d   |   Glass saved: ~%d%%" % [_cut_count, _total_pieces, waste_pct]
+	progress_label.text = "Cuts: %d / %d" % [_cuts_made, _total_cuts]
 
 func _on_done():
 	get_tree().change_scene_to_file("res://scenes/SolderStation.tscn")

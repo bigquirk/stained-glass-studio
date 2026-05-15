@@ -12,9 +12,18 @@ const PATTERNS = {
 			{"id": "d2", "poly": [Vector2(-70,-45),Vector2(70,-45),Vector2(70,45),Vector2(-70,45)], "target": Vector2(80, 145), "colour_index": 1},
 			{"id": "d3", "poly": [Vector2(-70,-45),Vector2(70,-45),Vector2(70,45),Vector2(-70,45)], "target": Vector2(220, 145), "colour_index": 0},
 		],
+		# cut_lines: seam positions for soldering (centred coords, piece extents)
 		"cut_lines": [
 			[Vector2(-140, 0),   Vector2(140, 0)],
 			[Vector2(0, -90),    Vector2(0, 90)],
+		],
+		# cut_sequence: ordered guillotine cuts for the cutting table.
+		# Each inner array is a phase — all cuts in a phase can be made in any order.
+		# Phase 0: column cuts first (full sheet width/height).
+		# Phase 1+: within-column cuts.
+		"cut_sequence": [
+			[[Vector2(0,-100), Vector2(0,100)]],
+			[[Vector2(-150,0), Vector2(0,0)], [Vector2(0,0), Vector2(150,0)]],
 		]
 	},
 	"pattern_sun": {
@@ -27,6 +36,10 @@ const PATTERNS = {
 		"cut_lines": [
 			[Vector2(-50, -90),  Vector2(-50, 90)],
 			[Vector2(50,  -90),  Vector2(50,  90)],
+		],
+		# Both cuts are independent full-height verticals — both available from the start.
+		"cut_sequence": [
+			[[Vector2(-50,-100), Vector2(-50,100)], [Vector2(50,-100), Vector2(50,100)]],
 		]
 	},
 	"pattern_arch": {
@@ -43,6 +56,11 @@ const PATTERNS = {
 			[Vector2(-130, -30), Vector2(130, -30)],
 			[Vector2(-130,  30), Vector2(130,  30)],
 			[Vector2(0,    -90), Vector2(0,     90)],
+		],
+		"cut_sequence": [
+			[[Vector2(0,-100), Vector2(0,100)]],
+			[[Vector2(-150,-30), Vector2(0,-30)], [Vector2(0,-30), Vector2(150,-30)]],
+			[[Vector2(-150,30),  Vector2(0,30)],  [Vector2(0,30),  Vector2(150,30)]],
 		]
 	}
 }
@@ -195,19 +213,25 @@ func _spawn_pieces(pattern_data: Dictionary):
 		node.set_meta("target_local",  piece_data["target"])   # sheet-local (0–300, 0–200)
 		node.set_meta("target_screen", _sheet_origin + piece_data["target"])
 
-		var poly = Polygon2D.new()
-		poly.polygon = PackedVector2Array(piece_data["poly"])
+		# Paper template: cream base + colour tint + thick sharpie border.
+		var paper = Polygon2D.new()
+		paper.polygon = PackedVector2Array(piece_data["poly"])
+		paper.color = Color(0.96, 0.93, 0.88, 1.0)
+		node.add_child(paper)
+
+		var tint = Polygon2D.new()
+		tint.polygon = PackedVector2Array(piece_data["poly"])
 		var col = COLOUR_MAP.get(colour_name, Color.WHITE)
-		col.a = 0.9
-		poly.color = col
-		node.add_child(poly)
+		col.a = 0.50
+		tint.color = col
+		node.add_child(tint)
 
 		var outline = Line2D.new()
 		var pts = piece_data["poly"].duplicate()
 		pts.append(pts[0])
 		outline.points = PackedVector2Array(pts)
-		outline.width = 2.0
-		outline.default_color = Color(1, 1, 1, 0.9)
+		outline.width = 3.0
+		outline.default_color = Color(0.08, 0.05, 0.03, 1.0)
 		node.add_child(outline)
 
 		# Position at the vertical centre of this piece's slot in the stack.
@@ -270,13 +294,13 @@ func _snap_piece(piece: Node2D, target: Vector2):
 	piece.rotation_degrees = 0.0
 	piece.set_meta("snapped", true)
 
-	# Brighten the piece to show it's locked in.
-	var poly = piece.get_child(0) as Polygon2D
-	if poly:
+	# Saturate the colour tint (child index 1) to show it's locked in.
+	var tint = piece.get_child(1) as Polygon2D
+	if tint:
 		var colour_name = piece.get_meta("colour_name", "clear")
 		var col = COLOUR_MAP.get(colour_name, Color.WHITE)
-		col.a = 1.0
-		poly.color = col
+		col.a = 0.75
+		tint.color = col
 
 	# Ghost disappears — piece now fills the slot.
 	var piece_id = piece.get_meta("piece_id")
@@ -290,12 +314,12 @@ func _snap_piece(piece: Node2D, target: Vector2):
 		instruction_label.text = "All pieces placed. Press Confirm to cut."
 
 func _restore_piece_colour(piece: Node2D):
-	var poly = piece.get_child(0) as Polygon2D
-	if poly:
+	var tint = piece.get_child(1) as Polygon2D
+	if tint:
 		var colour_name = piece.get_meta("colour_name", "clear")
 		var col = COLOUR_MAP.get(colour_name, Color.WHITE)
-		col.a = 0.9
-		poly.color = col
+		col.a = 0.50
+		tint.color = col
 
 func _all_snapped() -> bool:
 	for piece in _pieces:
@@ -323,4 +347,5 @@ func _on_confirm():
 		pp.rotation_degrees  = piece.rotation_degrees
 		GameState.current_cut_pieces.append(pp)
 	GameState.set_meta("cut_lines", pattern_data["cut_lines"])
+	GameState.set_meta("cut_sequence", pattern_data["cut_sequence"])
 	get_tree().change_scene_to_file("res://scenes/CuttingTable.tscn")
