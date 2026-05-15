@@ -126,7 +126,8 @@ func _build_colour_info():
 		sheet_selector.add_child(row)
 
 func _setup_sheet_display():
-	glass_sheet_display.color = Color("#C8E8F0")
+	# Neutral frosted surface — coloured piece ghosts read against this.
+	glass_sheet_display.color = Color(0.88, 0.88, 0.84, 1.0)
 
 func _load_pattern():
 	var pattern_id = GameState.active_commission.pattern_id
@@ -141,19 +142,28 @@ func _load_pattern():
 func _draw_ghost_outlines(pattern_data: Dictionary):
 	for piece_data in pattern_data["pieces"]:
 		var target_screen = _sheet_origin + piece_data["target"]
+
+		# Determine this slot's colour so the ghost shows what belongs here.
+		var colour_index = piece_data["colour_index"] % max(_commission_colours.size(), 1)
+		var colour_name = _commission_colours[colour_index] if _commission_colours.size() > 0 else "clear"
+		var slot_col = COLOUR_MAP.get(colour_name, Color.WHITE)
+
+		# Filled ghost — coloured at 30% so you can see the glass beneath.
 		var ghost = Polygon2D.new()
 		ghost.polygon = PackedVector2Array(piece_data["poly"])
 		ghost.position = target_screen
-		ghost.color = Color(1, 1, 1, 0.08)
+		slot_col.a = 0.30
+		ghost.color = slot_col
 		piece_container.add_child(ghost)
 
+		# Bright border so the slot boundary reads clearly.
 		var outline = Line2D.new()
 		var pts = piece_data["poly"].duplicate()
 		pts.append(pts[0])
 		outline.points = PackedVector2Array(pts)
 		outline.position = target_screen
-		outline.width = 1.5
-		outline.default_color = Color(1, 1, 1, 0.35)
+		outline.width = 2.0
+		outline.default_color = Color(1, 1, 1, 0.85)
 		piece_container.add_child(outline)
 
 		_ghost_nodes.append({"poly": ghost, "outline": outline, "id": piece_data["id"]})
@@ -267,12 +277,12 @@ func _snap_piece(piece: Node2D, target: Vector2):
 		col.a = 1.0
 		poly.color = col
 
-	# Fade out the ghost for this slot.
+	# Ghost disappears — piece now fills the slot.
 	var piece_id = piece.get_meta("piece_id")
 	for ghost in _ghost_nodes:
 		if ghost["id"] == piece_id:
-			ghost["poly"].color = Color(0, 0, 0, 0)
-			ghost["outline"].default_color = Color(1, 1, 1, 0.12)
+			ghost["poly"].color    = Color(0, 0, 0, 0)
+			ghost["outline"].default_color = Color(1, 1, 1, 0.20)
 
 	if _all_snapped():
 		confirm_button.disabled = false
